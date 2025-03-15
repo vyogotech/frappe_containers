@@ -1,0 +1,19 @@
+[Unit]
+Description=Frappe Bench
+After=network.target mariadb.service redis.service
+Requires=mariadb.service redis.service
+
+[Service]
+Type=simple
+User=frappe
+Group=frappe
+WorkingDirectory=/home/frappe/frappe-bench
+ExecStart=bench start
+Restart=always
+RestartSec=10
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=frappe-bench
+
+[Install]
+WantedBy=multi-user.target

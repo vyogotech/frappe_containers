@@ -1,0 +1,153 @@
+# Use the UBI8 base image with systemd
+FROM registry.access.redhat.com/ubi9/ubi-init
+
+# Install required dependencies using dnf
+RUN dnf -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm  \
+    wget \
+    vim \
+    git \
+    gcc \
+    libffi-devel \
+    libxml2-devel \
+    libxslt-devel \
+    yum-utils \
+    make \
+    openssl-devel \
+    bzip2-devel \
+    zlib-devel \
+    ncurses-devel \
+    xz-devel \
+    sqlite-devel \
+    libuuid-devel \
+    && dnf clean all
+
+
+# Download and install Python 3.10.14
+RUN cd /usr/src && \
+    wget https://www.python.org/ftp/python/3.10.14/Python-3.10.14.tgz && \
+    tar xzf Python-3.10.14.tgz && \
+    cd Python-3.10.14 && \
+    ./configure --enable-optimizations && \
+    make altinstall 
+RUN ln -s -f /usr/local/bin/python3.10 /usr/bin/python3 && \
+    ln -s -f /usr/local/bin/pip3.10 /usr/bin/pip3 && \
+    ln -s -f /usr/local/bin/pip3.10 /usr/bin/pip && \
+    cd /usr/src && \
+    rm -rf Python-3.10.14.tgz Python-3.10.14
+RUN python3 --version
+    # Create a new user to run the application
+# ENV BUILD_VER=3.10.13
+# ENV DLURL=http://python.org/ftp/python/${BUILD_VER}/Python-${BUILD_VER}.tgz
+# RUN mkdir -p /build; cd /build\
+#     && curl -L ${DLURL} | tar xz
+# RUN cd /build/Python-${BUILD_VER}\
+#     && ./configure --prefix=/usr/local\
+#     && make -j2 && make install DESTDIR=/tmp/installdir
+
+#     RUN echo 'echo /usr/local/lib > /etc/ld.so.conf.d/usr-local-lib.conf' > /tmp/installdir/run-ldconfig.sh
+#     RUN echo '/sbin/ldconfig' >> /tmp/installdir/run-ldconfig.sh
+#     RUN dnf install -y ruby-devel gcc make rpm-build rubygems 
+#     RUN gem install --no-document fpm 
+#     RUN fpm -s dir -t rpm -n python -v ${BUILD_VER} -C /tmp/installdir \
+#         --after-install /tmp/installdir/run-ldconfig.sh \
+#         -d 'openssl' \
+#         -d 'bzip2' \
+#         -d 'sqlite' \
+#         -d 'ncurses' \
+#         -d 'libffi' \
+#         -d 'tk' \
+#         --directories=/usr/local/lib/python3.10/ \
+#         usr/local
+# Install Python 3.11 RPM from a community repository or direct download
+
+RUN dnf -y install https://rpmfind.net/linux/almalinux/9.4/AppStream/ppc64le/os/Packages/xorg-x11-fonts-75dpi-7.5-33.el9.noarch.rpm 
+
+# Install MariaDB 10.6 from the official MariaDB repository
+#RUN dnf -y install https://rpmfind.net/linux/fedora/linux/development/rawhide/Everything/x86_64/os/Packages/b/boost-devel-1.83.0-12.fc42.i686.rpm
+RUN curl -sLS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup -o /tmp/install_maria.sh && chmod +x  /tmp/install_maria.sh 
+RUN ./tmp/install_maria.sh --mariadb-server-version=10.6 --skip-check-installed
+
+RUN dnf install -y MariaDB-server galera-4 MariaDB-client MariaDB-shared 
+# Download and Install Redis 7.2.7 from AlmaLinux's RPM
+#RUN dnf install -y https://www.rpmfind.net/linux/almalinux/9.5/AppStream/x86_64/os/Packages/redis-7.2.7-1.module_el9.5.0+134+2e645600.x86_64.rpm 
+RUN dnf module enable redis -y && dnf install -y redis
+# Install Node Version Manager (NVM) and Node.js 18
+ENV NVM_DIR=/usr/local/nvm
+
+# Install Node.js and Yarn directly with dnf instead of using NVM
+RUN dnf -y install https://rpm.nodesource.com/pub_18.x/el/9/x86_64/nodesource-release-el9-1.noarch.rpm && \
+    dnf -y install nodejs && \
+    npm install -g yarn
+
+
+
+
+# Install Frappe v15 dependencies
+# python3-pip python3-devel
+RUN dnf -y install   MariaDB-devel && pip install --upgrade pip \
+    && pip install frappe-bench \
+    && pip install redis \
+    && pip install mariadb
+#install yarn for everyone USING NPM
+ 
+    RUN systemctl enable redis \
+    && systemctl enable mariadb
+
+    RUN useradd -ms /bin/bash frappe
+# Set the working directory to frappe's home directory
+
+# Install Nginx
+RUN dnf -y install nginx && \
+    systemctl enable nginx && \
+    mkdir -p /etc/nginx/conf.d/ && \
+    mkdir -p /var/log/nginx && \
+    touch /var/log/nginx/error.log /var/log/nginx/access.log
+
+ADD frappe.conf /etc/nginx/conf.d/frappe.conf
+ADD frappe-bench.service /etc/systemd/system/frappe-bench.service 
+
+ADD common_site_config.json /home/frappe/frappe-bench/sites/common_site_config.json
+
+# Update nginx.conf to run as non-root
+RUN systemctl enable frappe-bench && sed -i 's/user nginx;/user frappe;/' /etc/nginx/nginx.conf
+
+# Set permissions for OpenShift (allowing arbitrary user IDs)
+RUN mkdir -p /var/lib/nginx/tmp && \
+    chmod -R 777 /var/lib/nginx /var/log/nginx && \
+    chmod -R 777 /etc/nginx && \
+    chmod -R 777 /home/frappe && \
+    chown -R frappe:0 /home/frappe && \
+    chmod -R g=u /home/frappe && \
+    chown frappe:0 /home/frappe/frappe-bench/sites/common_site_config.json && \
+    chown -R frappe:0 /var/log/nginx /var/lib/nginx && \
+    chgrp -R 0 /etc/nginx /var/log/nginx /var/lib/nginx && \
+    chmod -R g=u /etc/nginx /var/log/nginx /var/lib/nginx
+
+
+WORKDIR /home/frappe
+USER frappe
+RUN echo $NVM_DIR && export PATH=$NVM_DIR/versions/node/v18.20.7/bin:$PATH && yarn --version
+ARG FRAPPE_BRANCH=version-15
+ARG FRAPPE_PATH=https://github.com/frappe/frappe
+ARG ERPNEXT_REPO=https://github.com/frappe/erpnext
+ARG ERPNEXT_BRANCH=version-15
+RUN bench init \
+  --frappe-branch=${FRAPPE_BRANCH} \
+  --frappe-path=${FRAPPE_PATH} \
+  --no-backups \
+  --skip-redis-config-generation \
+  --verbose \
+  /home/frappe/frappe-bench && \
+  cd /home/frappe/frappe-bench && \
+  bench get-app --branch=${ERPNEXT_BRANCH} --resolve-deps erpnext ${ERPNEXT_REPO} && \
+  find apps -mindepth 1 -path "*/.git" | xargs rm -fr
+# Set up Redis and MariaDB as services
+
+
+# Expose necessary ports
+EXPOSE 3306 6379 8000
+WORKDIR /home/frappe/frappe-bench
+
+# Command to start systemd services and Frappe
+CMD ["/usr/sbin/init"]
+USER 1001
